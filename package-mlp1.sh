@@ -43,6 +43,13 @@ mkdir -p \
     "$STATE_ROOT/cache" \
     "$LOG_ROOT"
 
+# Seed the default control mapping on first run so the Loong Gamepad shoulder
+# buttons (L1/R1) work out of the box. Never clobber a user's own remap.
+CONTROLS="$STATE_ROOT/config/ppsspp/PSP/SYSTEM/controls.ini"
+if [ ! -f "$CONTROLS" ] && [ -f "$SELF_DIR/defaults/controls.ini" ]; then
+    cp "$SELF_DIR/defaults/controls.ini" "$CONTROLS"
+fi
+
 export HOME="$STATE_ROOT/home"
 export XDG_CONFIG_HOME="$STATE_ROOT/config"
 export XDG_DATA_HOME="$STATE_ROOT/data"
@@ -100,6 +107,12 @@ main() {
                 cp -f "$lib" "$OUTPUT_DIR/lib/$(basename "$lib")"
                 chmod 755 "$OUTPUT_DIR/lib/$(basename "$lib")"
             done
+    fi
+
+    # Default control mapping seeded on first run (Loong Gamepad L1/R1 fix).
+    if [ -f "$ROOT_DIR/config/controls.ini" ]; then
+        mkdir -p "$OUTPUT_DIR/defaults"
+        cp -f "$ROOT_DIR/config/controls.ini" "$OUTPUT_DIR/defaults/controls.ini"
     fi
 
     write_launch_script
