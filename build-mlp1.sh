@@ -6,6 +6,7 @@ PPSSPP_VERSION="${PPSSPP_VERSION:-v1.20.3}"
 WORKDIR="${WORKDIR:-$ROOT_DIR/workdir/mlp1/build}"
 OUTPUT_DIR="${OUTPUT_DIR:-$ROOT_DIR/output/mlp1/build}"
 BUILD_JOBS="${BUILD_JOBS:-$(nproc)}"
+MLP1_BUILD_PROFILE="${MLP1_BUILD_PROFILE:-perf}"
 
 if [ -z "${SYSROOT:-}" ] || [ -z "${CC:-}" ] || [ -z "${CXX:-}" ]; then
     echo "build-mlp1.sh must run inside the UMRK MLP1 toolchain environment." >&2
@@ -21,6 +22,14 @@ READELF="${READELF:-${CROSS_COMPILE:-aarch64-buildroot-linux-gnu-}readelf}"
 export PKG_CONFIG_SYSROOT_DIR="$SYSROOT"
 export PKG_CONFIG_LIBDIR="$SYSROOT/usr/lib/pkgconfig:$SYSROOT/usr/share/pkgconfig"
 export PKG_CONFIG_PATH="$PKG_CONFIG_LIBDIR"
+
+if [ -f /opt/mlp1-toolchain/umrk/mlp1-build-flags.env ]; then
+    . /opt/mlp1-toolchain/umrk/mlp1-build-flags.env
+else
+    UMRK_MLP1_PROFILE_CFLAGS="-O3 -mcpu=cortex-a55 -mtune=cortex-a55 -ffunction-sections -fdata-sections -DNDEBUG"
+    UMRK_MLP1_PROFILE_CXXFLAGS="-O3 -mcpu=cortex-a55 -mtune=cortex-a55 -ffunction-sections -fdata-sections -DNDEBUG"
+    UMRK_MLP1_PROFILE_LDFLAGS="-Wl,--gc-sections"
+fi
 
 SRC_DIR="$WORKDIR/src/ppsspp-$PPSSPP_VERSION"
 BUILD_DIR="$WORKDIR/cmake/ppsspp-$PPSSPP_VERSION"
@@ -68,9 +77,9 @@ if [ "${FORCE_CONFIGURE:-0}" = "1" ] || [ ! -f "$BUILD_DIR/CMakeCache.txt" ]; th
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_TOOLCHAIN_FILE="$CMAKE_TOOLCHAIN_FILE" \
         -DPKG_CONFIG_EXECUTABLE="$PKG_CONFIG_EXECUTABLE" \
-        -DCMAKE_C_FLAGS="-O3 -mcpu=cortex-a55 -ffunction-sections -fdata-sections -fomit-frame-pointer -Wno-error" \
-        -DCMAKE_CXX_FLAGS="-O3 -mcpu=cortex-a55 -ffunction-sections -fdata-sections -fomit-frame-pointer -Wno-error" \
-        -DCMAKE_EXE_LINKER_FLAGS="-Wl,--gc-sections -static-libstdc++ -static-libgcc" \
+        -DCMAKE_C_FLAGS="$UMRK_MLP1_PROFILE_CFLAGS -fomit-frame-pointer -Wno-error" \
+        -DCMAKE_CXX_FLAGS="$UMRK_MLP1_PROFILE_CXXFLAGS -fomit-frame-pointer -Wno-error" \
+        -DCMAKE_EXE_LINKER_FLAGS="$UMRK_MLP1_PROFILE_LDFLAGS -static-libstdc++ -static-libgcc" \
         -DUSING_GLES2=ON \
         -DUSING_EGL=ON \
         -DUSING_FBDEV=ON \

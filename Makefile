@@ -1,6 +1,7 @@
 SHELL := /bin/bash
 TOOLCHAIN_IMAGE ?= ghcr.io/utility-muffin-research-kitchen/mlp1-toolchain:local
 DOCKER ?= docker
+MLP1_BUILD_PROFILE ?= perf
 
 .DEFAULT_GOAL := help
 .PHONY: help build-mlp1 package-mlp1 clean
@@ -20,11 +21,12 @@ build-mlp1:
 		-e PPSSPP_VERSION \
 		-e BUILD_JOBS \
 		-e FORCE_CONFIGURE \
+		-e MLP1_BUILD_PROFILE="$(MLP1_BUILD_PROFILE)" \
 		"$(TOOLCHAIN_IMAGE)" \
 		./build-mlp1.sh
 
 package-mlp1: build-mlp1
-	./package-mlp1.sh
+	MLP1_BUILD_PROFILE="$(MLP1_BUILD_PROFILE)" ./package-mlp1.sh
 
 clean:
 	rm -rf output

@@ -7,6 +7,16 @@ OUTPUT_DIR="${OUTPUT_DIR:-$ROOT_DIR/output/mlp1/ppsspp}"
 BUILD_OUTPUT_DIR="${BUILD_OUTPUT_DIR:-$ROOT_DIR/output/mlp1/build}"
 
 PPSSPP_VERSION="${PPSSPP_VERSION:-v1.20.3}"
+MLP1_BUILD_PROFILE="${MLP1_BUILD_PROFILE:-perf}"
+if [ -f "$ROOT_DIR/../mlp1-toolchain/flags/mlp1-build-flags.env" ]; then
+    . "$ROOT_DIR/../mlp1-toolchain/flags/mlp1-build-flags.env"
+else
+    UMRK_MLP1_TARGET_SOC="rk3566"
+    UMRK_MLP1_TARGET_CPU="cortex-a55"
+    UMRK_MLP1_PROFILE_CFLAGS="-O3 -mcpu=cortex-a55 -mtune=cortex-a55 -ffunction-sections -fdata-sections -DNDEBUG"
+    UMRK_MLP1_PROFILE_CXXFLAGS="-O3 -mcpu=cortex-a55 -mtune=cortex-a55 -ffunction-sections -fdata-sections -DNDEBUG"
+    UMRK_MLP1_PROFILE_LDFLAGS="-Wl,--gc-sections"
+fi
 PPSSPP_BINARY="${PPSSPP_BINARY:-$BUILD_OUTPUT_DIR/PPSSPPSDL_MLP1}"
 PPSSPP_ASSETS_DIR="${PPSSPP_ASSETS_DIR:-$BUILD_OUTPUT_DIR/assets}"
 PPSSPP_RUNTIME_LIB_DIR="${PPSSPP_RUNTIME_LIB_DIR:-$BUILD_OUTPUT_DIR/lib}"
@@ -74,11 +84,18 @@ write_manifest() {
   "source_repo": "hrydgard/ppsspp",
   "ppsspp_version": "$PPSSPP_VERSION",
   "toolchain": "UMRK mlp1-toolchain",
+  "target_soc": "$UMRK_MLP1_TARGET_SOC",
+  "target_cpu": "$UMRK_MLP1_TARGET_CPU",
+  "build_profile": "$MLP1_BUILD_PROFILE",
+  "cflags": "$UMRK_MLP1_PROFILE_CFLAGS",
+  "cxxflags": "$UMRK_MLP1_PROFILE_CXXFLAGS",
+  "ldflags": "$UMRK_MLP1_PROFILE_LDFLAGS",
   "patch_set": "common + a30/display-rotation + flip",
   "default_sdl_video_driver": "kmsdrm",
   "default_display_rotation": 270,
   "entrypoint": "launch.sh",
-  "binary": "bin/PPSSPPSDL"
+  "binary": "bin/PPSSPPSDL",
+  "exceptions": []
 }
 EOF
 }
