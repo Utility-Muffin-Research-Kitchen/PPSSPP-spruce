@@ -100,7 +100,7 @@ export HOME="$STATE_ROOT/home"
 export XDG_CONFIG_HOME="$STATE_ROOT/config"
 export XDG_DATA_HOME="$STATE_ROOT/data"
 export XDG_CACHE_HOME="$STATE_ROOT/cache"
-export LD_LIBRARY_PATH="$SELF_DIR/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+INHERITED_LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}"
 export SDL_VIDEODRIVER="${PPSSPP_SDL_VIDEODRIVER:-kmsdrm}"
 
 BACKEND="${PPSSPP_BACKEND:-vulkan}"
@@ -129,7 +129,7 @@ case "$BACKEND" in
                 esac
                 ;;
         esac
-        export LD_LIBRARY_PATH="$VULKAN_ROOT/lib:$LD_LIBRARY_PATH"
+        export LD_LIBRARY_PATH="$VULKAN_ROOT/lib:$SELF_DIR/lib${INHERITED_LD_LIBRARY_PATH:+:$INHERITED_LD_LIBRARY_PATH}"
         export VK_ICD_FILENAMES="$ICD_PATH"
         case "${VK_LOADER_LAYERS_DISABLE:-}" in
             *VK_LAYER_window_system_integration*) ;;
@@ -178,6 +178,11 @@ case "$BACKEND" in
             exit 64
         fi
         unset VK_ICD_FILENAMES
+        if [ -n "$INHERITED_LD_LIBRARY_PATH" ]; then
+            export LD_LIBRARY_PATH="$INHERITED_LD_LIBRARY_PATH"
+        else
+            unset LD_LIBRARY_PATH
+        fi
         export SDL_KMSDRM_REQUIRE_DRM_MASTER="${SDL_KMSDRM_REQUIRE_DRM_MASTER:-0}"
         export DISPLAY_ROTATION="${PPSSPP_DISPLAY_ROTATION:-270}"
         ;;
@@ -208,6 +213,8 @@ set -eu
 SELF_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 export PPSSPP_BACKEND=gles
 export PPSSPP_ROTATION_MODE=gles
+export PPSSPP_SDL_VIDEODRIVER="${PPSSPP_GLES_SDL_VIDEODRIVER:-wayland}"
+export PPSSPP_DISPLAY_ROTATION="${PPSSPP_GLES_DISPLAY_ROTATION:-0}"
 exec "$SELF_DIR/launch.sh" "$@"
 EOF
     chmod 755 "$OUTPUT_DIR/launch-gles.sh"
@@ -229,7 +236,7 @@ write_manifest() {
   "cflags": "$UMRK_MLP1_PROFILE_CFLAGS",
   "cxxflags": "$UMRK_MLP1_PROFILE_CXXFLAGS",
   "ldflags": "$UMRK_MLP1_PROFILE_LDFLAGS",
-  "patch_set": "common + mlp1/display-rotation + flip",
+  "patch_set": "common + mlp1/display-rotation + mlp1/command-line-backend + flip",
   "graphics_backends": ["vulkan-display", "gles"],
   "default_graphics_backend": "vulkan-display",
   "vulkan_runtime": "rk3566-g52-g29p1",
@@ -237,6 +244,8 @@ write_manifest() {
   "direct_drm_required_for": ["vulkan-display"],
   "default_sdl_video_driver": "kmsdrm",
   "default_display_rotation": 270,
+  "fallback_sdl_video_driver": "wayland",
+  "fallback_display_rotation": 0,
   "entrypoint": "launch.sh",
   "fallback_entrypoint": "launch-gles.sh",
   "binary": "bin/PPSSPPSDL",

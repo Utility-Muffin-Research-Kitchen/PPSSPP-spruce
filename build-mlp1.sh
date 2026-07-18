@@ -33,7 +33,7 @@ fi
 
 SRC_DIR="$WORKDIR/src/ppsspp-$PPSSPP_VERSION"
 BUILD_DIR="$WORKDIR/cmake/ppsspp-$PPSSPP_VERSION"
-PATCH_SET_ID="mlp1-v4-vulkan-kmsdrm-display-rotation"
+PATCH_SET_ID="mlp1-v5-vulkan-kmsdrm-display-rotation-cli-backend"
 PATCH_MARKER="$SRC_DIR/.umrk-$PATCH_SET_ID-patches-applied"
 
 echo "=== Building PPSSPP $PPSSPP_VERSION for UMRK MLP1 ==="
