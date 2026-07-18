@@ -4,3 +4,5 @@ ccache/
 output/
 workdir/
 ppsspp/
+__pycache__/
+*.pyc

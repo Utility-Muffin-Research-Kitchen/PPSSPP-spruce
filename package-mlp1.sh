@@ -6,7 +6,7 @@ WORKDIR="${WORKDIR:-$ROOT_DIR/workdir/mlp1}"
 OUTPUT_DIR="${OUTPUT_DIR:-$ROOT_DIR/output/mlp1/ppsspp}"
 BUILD_OUTPUT_DIR="${BUILD_OUTPUT_DIR:-$ROOT_DIR/output/mlp1/build}"
 
-PPSSPP_VERSION="${PPSSPP_VERSION:-v1.20.3}"
+PPSSPP_VERSION="${PPSSPP_VERSION:-v1.20.4}"
 MLP1_BUILD_PROFILE="${MLP1_BUILD_PROFILE:-perf}"
 if [ -f "$ROOT_DIR/../mlp1-toolchain/flags/mlp1-build-flags.env" ]; then
     . "$ROOT_DIR/../mlp1-toolchain/flags/mlp1-build-flags.env"
@@ -41,8 +41,31 @@ if [ "$#" -lt 1 ]; then
 fi
 
 ROM_PATH="$1"
-STATE_ROOT="${UMRK_PLATFORM_PATH:-${SYSTEM_PATH:-$SELF_DIR/../..}}/state/ppsspp"
+if [ ! -f "$ROM_PATH" ]; then
+    echo "PPSSPP ROM does not exist: $ROM_PATH" >&2
+    exit 66
+fi
+
+PLATFORM_ROOT="${UMRK_PLATFORM_PATH:-${SYSTEM_PATH:-$SELF_DIR/../..}}"
+if [ -n "${USERDATA_PATH:-}" ]; then
+    STATE_ROOT="$USERDATA_PATH/ppsspp"
+elif [ -n "${SDCARD_PATH:-}" ]; then
+    STATE_ROOT="$SDCARD_PATH/.userdata/${PLATFORM:-mlp1}/ppsspp"
+else
+    STATE_ROOT="$SELF_DIR/.userdata/ppsspp"
+fi
 LOG_ROOT="${LOGS_PATH:-$STATE_ROOT/logs}"
+OLD_STATE_ROOT="$PLATFORM_ROOT/state/ppsspp"
+
+# The first UMRK PPSSPP package accidentally kept state below the
+# release-managed platform tree. Copy it once when the durable root is absent;
+# keep the old copy for rollback.
+if [ ! -e "$STATE_ROOT" ] && [ -d "$OLD_STATE_ROOT" ]; then
+    mkdir -p "$(dirname "$STATE_ROOT")"
+    cp -R "$OLD_STATE_ROOT" "$STATE_ROOT"
+    mkdir -p "$STATE_ROOT/.umrk-migrations"
+    : >"$STATE_ROOT/.umrk-migrations/platform-state-to-userdata-v1"
+fi
 
 mkdir -p \
     "$STATE_ROOT/home" \
@@ -60,18 +83,134 @@ if [ ! -f "$CONTROLS" ] && [ -f "$SELF_DIR/defaults/controls.ini" ]; then
     cp "$SELF_DIR/defaults/controls.ini" "$CONTROLS"
 fi
 
+PPSSPP_INI="$STATE_ROOT/config/ppsspp/PSP/SYSTEM/ppsspp.ini"
+PRESET="${PPSSPP_PRESET:-balanced}"
+case "$PRESET" in
+    balanced|performance) ;;
+    *)
+        echo "unsupported PPSSPP_PRESET: $PRESET" >&2
+        exit 64
+        ;;
+esac
+if [ ! -f "$PPSSPP_INI" ] && [ -f "$SELF_DIR/defaults/ppsspp-$PRESET.ini" ]; then
+    cp "$SELF_DIR/defaults/ppsspp-$PRESET.ini" "$PPSSPP_INI"
+fi
+
 export HOME="$STATE_ROOT/home"
 export XDG_CONFIG_HOME="$STATE_ROOT/config"
 export XDG_DATA_HOME="$STATE_ROOT/data"
 export XDG_CACHE_HOME="$STATE_ROOT/cache"
 export LD_LIBRARY_PATH="$SELF_DIR/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 export SDL_VIDEODRIVER="${PPSSPP_SDL_VIDEODRIVER:-kmsdrm}"
-export SDL_KMSDRM_REQUIRE_DRM_MASTER="${SDL_KMSDRM_REQUIRE_DRM_MASTER:-0}"
-export DISPLAY_ROTATION="${PPSSPP_DISPLAY_ROTATION:-${DISPLAY_ROTATION:-270}}"
 
-exec "$SELF_DIR/bin/PPSSPPSDL" "$ROM_PATH" >>"$LOG_ROOT/ppsspp.log" 2>&1
+BACKEND="${PPSSPP_BACKEND:-vulkan}"
+ROTATION_MODE="${PPSSPP_ROTATION_MODE:-}"
+VULKAN_ROOT="${PPSSPP_VULKAN_ROOT:-$PLATFORM_ROOT/runtime/graphics/vulkan/rk3566-g52-g29p1}"
+ICD_PATH="$VULKAN_ROOT/share/vulkan/icd.d/rk_vk_g29.json"
+DRIVER_PATH="$VULKAN_ROOT/lib/libmali.so.1"
+
+case "$BACKEND" in
+    vulkan)
+        ROTATION_MODE="${ROTATION_MODE:-native}"
+        if [ ! -f "$DRIVER_PATH" ] || [ ! -f "$ICD_PATH" ]; then
+            echo "PPSSPP Vulkan runtime is incomplete: $VULKAN_ROOT" >&2
+            echo "Select the PPSSPP GLES core or restage the MLP1 graphics runtime." >&2
+            exit 69
+        fi
+        case "${JAWAKA_DIRECT_DRM:-0}" in
+            1|true|yes|TRUE|YES) ;;
+            *)
+                case "${PPSSPP_ALLOW_NO_DIRECT_DRM:-0}" in
+                    1|true|yes|TRUE|YES) ;;
+                    *)
+                        echo "PPSSPP Vulkan requires Jawaka's direct-DRM handoff." >&2
+                        exit 75
+                        ;;
+                esac
+                ;;
+        esac
+        export LD_LIBRARY_PATH="$VULKAN_ROOT/lib:$LD_LIBRARY_PATH"
+        export VK_ICD_FILENAMES="$ICD_PATH"
+        case "${VK_LOADER_LAYERS_DISABLE:-}" in
+            *VK_LAYER_window_system_integration*) ;;
+            "") export VK_LOADER_LAYERS_DISABLE="VK_LAYER_window_system_integration" ;;
+            *) export VK_LOADER_LAYERS_DISABLE="$VK_LOADER_LAYERS_DISABLE,VK_LAYER_window_system_integration" ;;
+        esac
+        export SDL_KMSDRM_REQUIRE_DRM_MASTER="${SDL_KMSDRM_REQUIRE_DRM_MASTER:-1}"
+        case "$ROTATION_MODE" in
+            native)
+                export DISPLAY_ROTATION="${PPSSPP_DISPLAY_ROTATION:-270}"
+                ;;
+            rga-shim)
+                DRM_ROTATE_SHIM="${PPSSPP_DRM_ROTATE_SHIM:-}"
+                if [ -z "$DRM_ROTATE_SHIM" ] &&
+                   [ -f "$PLATFORM_ROOT/runtime/graphics/drm-rotate/aarch64/leaf-drm-rotate.so" ]; then
+                    DRM_ROTATE_SHIM="$PLATFORM_ROOT/runtime/graphics/drm-rotate/aarch64/leaf-drm-rotate.so"
+                fi
+                PORTMASTER_DATA_ROOT="${PORTMASTER_MLP1_DATA_DIR:-${USERDATA_PATH:+$USERDATA_PATH/portmaster}}"
+                if [ -z "$DRM_ROTATE_SHIM" ] &&
+                   [ -n "$PORTMASTER_DATA_ROOT" ] &&
+                   [ -f "$PORTMASTER_DATA_ROOT/compat/drm/aarch64/leaf-drm-rotate.so" ]; then
+                    DRM_ROTATE_SHIM="$PORTMASTER_DATA_ROOT/compat/drm/aarch64/leaf-drm-rotate.so"
+                fi
+                if [ ! -f "$DRM_ROTATE_SHIM" ]; then
+                    echo "PPSSPP's optional DRM rotation shim is unavailable." >&2
+                    echo "Install the PortMaster Pak or set PPSSPP_DRM_ROTATE_SHIM explicitly." >&2
+                    exit 69
+                fi
+                export DISPLAY_ROTATION=0
+                export LEAF_DRM_ROTATE="${LEAF_DRM_ROTATE:-270}"
+                case ":${LD_PRELOAD:-}:" in
+                    *:"$DRM_ROTATE_SHIM":*) ;;
+                    *) export LD_PRELOAD="$DRM_ROTATE_SHIM${LD_PRELOAD:+:$LD_PRELOAD}" ;;
+                esac
+                ;;
+            *)
+                echo "unsupported Vulkan PPSSPP_ROTATION_MODE: $ROTATION_MODE" >&2
+                exit 64
+                ;;
+        esac
+        ;;
+    gles)
+        ROTATION_MODE="${ROTATION_MODE:-gles}"
+        if [ "$ROTATION_MODE" != "gles" ]; then
+            echo "GLES requires PPSSPP_ROTATION_MODE=gles" >&2
+            exit 64
+        fi
+        unset VK_ICD_FILENAMES
+        export SDL_KMSDRM_REQUIRE_DRM_MASTER="${SDL_KMSDRM_REQUIRE_DRM_MASTER:-0}"
+        export DISPLAY_ROTATION="${PPSSPP_DISPLAY_ROTATION:-270}"
+        ;;
+    *)
+        echo "unsupported PPSSPP_BACKEND: $BACKEND" >&2
+        exit 64
+        ;;
+esac
+
+{
+    printf '%s\n' "=== UMRK PPSSPP launch ==="
+    printf 'version=%s backend=%s rotation=%s preset=%s direct_drm=%s\n' \
+        "v1.20.4" "$BACKEND" "$ROTATION_MODE" "$PRESET" "${JAWAKA_DIRECT_DRM:-0}"
+    printf 'state=%s\n' "$STATE_ROOT"
+    if [ "$BACKEND" = "vulkan" ]; then
+        printf 'vulkan_root=%s icd=%s\n' "$VULKAN_ROOT" "$ICD_PATH"
+    fi
+} >>"$LOG_ROOT/ppsspp.log"
+
+exec "$SELF_DIR/bin/PPSSPPSDL" --fullscreen "--graphics=$BACKEND" "$ROM_PATH" \
+    >>"$LOG_ROOT/ppsspp.log" 2>&1
 EOF
     chmod 755 "$path"
+
+    cat >"$OUTPUT_DIR/launch-gles.sh" <<'EOF'
+#!/bin/sh
+set -eu
+SELF_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+export PPSSPP_BACKEND=gles
+export PPSSPP_ROTATION_MODE=gles
+exec "$SELF_DIR/launch.sh" "$@"
+EOF
+    chmod 755 "$OUTPUT_DIR/launch-gles.sh"
 }
 
 write_manifest() {
@@ -90,10 +229,16 @@ write_manifest() {
   "cflags": "$UMRK_MLP1_PROFILE_CFLAGS",
   "cxxflags": "$UMRK_MLP1_PROFILE_CXXFLAGS",
   "ldflags": "$UMRK_MLP1_PROFILE_LDFLAGS",
-  "patch_set": "common + a30/display-rotation + flip",
+  "patch_set": "common + mlp1/display-rotation + flip",
+  "graphics_backends": ["vulkan-display", "gles"],
+  "default_graphics_backend": "vulkan-display",
+  "vulkan_runtime": "rk3566-g52-g29p1",
+  "rotation_modes": ["native", "rga-shim", "gles"],
+  "direct_drm_required_for": ["vulkan-display"],
   "default_sdl_video_driver": "kmsdrm",
   "default_display_rotation": 270,
   "entrypoint": "launch.sh",
+  "fallback_entrypoint": "launch-gles.sh",
   "binary": "bin/PPSSPPSDL",
   "exceptions": []
 }
@@ -131,6 +276,13 @@ main() {
         mkdir -p "$OUTPUT_DIR/defaults"
         cp -f "$ROOT_DIR/config/controls.ini" "$OUTPUT_DIR/defaults/controls.ini"
     fi
+    for preset in balanced performance; do
+        if [ -f "$ROOT_DIR/config/ppsspp-$preset.ini" ]; then
+            mkdir -p "$OUTPUT_DIR/defaults"
+            cp -f "$ROOT_DIR/config/ppsspp-$preset.ini" \
+                "$OUTPUT_DIR/defaults/ppsspp-$preset.ini"
+        fi
+    done
 
     write_launch_script
     write_manifest
@@ -140,11 +292,11 @@ PPSSPP standalone payload for UMRK MLP1.
 
 Launch through Jawaka with a PSP .chd, .iso, .cso, or .pbp file.
 The binary is built from PPSSPP source with the UMRK MLP1 toolchain.
-The launch wrapper defaults to SDL KMSDRM and DISPLAY_ROTATION=270 for the
-MLP1 portrait panel. Override with PPSSPP_SDL_VIDEODRIVER or
-PPSSPP_DISPLAY_ROTATION when testing another display path.
-The launch wrapper stores PPSSPP HOME/XDG state under the Leaf platform state
-directory on the SD card.
+The default launch wrapper uses direct-display Vulkan with the shared MLP1 g29
+graphics runtime and native PPSSPP portrait-panel rotation. launch-gles.sh is a
+composited GLES recovery path. PPSSPP state is durable under USERDATA_PATH.
+PPSSPP_PRESET=balanced (default) or performance selects first-run defaults;
+existing user configuration is never overwritten.
 EOF
 
     find "$OUTPUT_DIR" -maxdepth 3 -type f | sort

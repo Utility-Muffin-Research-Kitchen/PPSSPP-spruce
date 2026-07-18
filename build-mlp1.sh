@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PPSSPP_VERSION="${PPSSPP_VERSION:-v1.20.3}"
+PPSSPP_VERSION="${PPSSPP_VERSION:-v1.20.4}"
 WORKDIR="${WORKDIR:-$ROOT_DIR/workdir/mlp1/build}"
 OUTPUT_DIR="${OUTPUT_DIR:-$ROOT_DIR/output/mlp1/build}"
 BUILD_JOBS="${BUILD_JOBS:-$(nproc)}"
@@ -33,7 +33,7 @@ fi
 
 SRC_DIR="$WORKDIR/src/ppsspp-$PPSSPP_VERSION"
 BUILD_DIR="$WORKDIR/cmake/ppsspp-$PPSSPP_VERSION"
-PATCH_SET_ID="mlp1-v2-portrait-rotation"
+PATCH_SET_ID="mlp1-v4-vulkan-kmsdrm-display-rotation"
 PATCH_MARKER="$SRC_DIR/.umrk-$PATCH_SET_ID-patches-applied"
 
 echo "=== Building PPSSPP $PPSSPP_VERSION for UMRK MLP1 ==="
@@ -47,7 +47,8 @@ clone_source() {
 }
 
 if [ -d "$SRC_DIR/.git" ] && [ ! -f "$PATCH_MARKER" ] &&
-    { compgen -G "$SRC_DIR/.umrk-mlp1-patches*-applied" >/dev/null ||
+    { compgen -G "$SRC_DIR/.umrk-mlp1-*-patches-applied" >/dev/null ||
+      compgen -G "$SRC_DIR/.umrk-mlp1-patches*-applied" >/dev/null ||
       compgen -G "$SRC_DIR/.umrk-mlp1-patches-applied" >/dev/null; }; then
     echo "=== PPSSPP patch set changed; refreshing source tree ==="
     rm -rf "$BUILD_DIR"
@@ -60,9 +61,13 @@ if [ ! -f "$PATCH_MARKER" ]; then
     echo "=== Applying spruce patches ==="
     cd "$SRC_DIR"
     for patch in "$ROOT_DIR"/patches/common/*.py \
-                 "$ROOT_DIR"/patches/a30/display-rotation.py \
+                 "$ROOT_DIR"/patches/mlp1/*.py \
                  "$ROOT_DIR"/patches/flip/*.py; do
         [ -f "$patch" ] || continue
+        if [ "$(basename "$patch")" = "skip-vulkan-probe.py" ]; then
+            echo "Skipped for Vulkan build: ${patch#$ROOT_DIR/patches/}"
+            continue
+        fi
         python3 "$patch"
         echo "Applied: ${patch#$ROOT_DIR/patches/}"
     done
@@ -83,7 +88,8 @@ if [ "${FORCE_CONFIGURE:-0}" = "1" ] || [ ! -f "$BUILD_DIR/CMakeCache.txt" ]; th
         -DUSING_GLES2=ON \
         -DUSING_EGL=ON \
         -DUSING_FBDEV=ON \
-        -DVULKAN=OFF \
+        -DVULKAN=ON \
+        -DUSE_VULKAN_DISPLAY_KHR=ON \
         -DUSING_X11_VULKAN=OFF \
         -DUSE_WAYLAND_WSI=OFF \
         -DBUILD_SHARED_LIBS=OFF \
