@@ -76,11 +76,47 @@ mkdir -p \
     "$STATE_ROOT/cache" \
     "$LOG_ROOT"
 
-# Seed the default control mapping on first run so the Loong Gamepad shoulder
-# buttons (L1/R1) work out of the box. Never clobber a user's own remap.
+# Seed the default control mapping on first run so the Loong Gamepad controls
+# work out of the box.
 CONTROLS="$STATE_ROOT/config/ppsspp/PSP/SYSTEM/controls.ini"
 if [ ! -f "$CONTROLS" ] && [ -f "$SELF_DIR/defaults/controls.ini" ]; then
     cp "$SELF_DIR/defaults/controls.ini" "$CONTROLS"
+fi
+
+# Correct the original shipped Square/Triangle pair once, but only while both
+# entries still exactly match that old default. Any user remap is left alone.
+CONTROL_MIGRATIONS="$STATE_ROOT/.umrk-migrations"
+CONTROL_FACE_FIX="$CONTROL_MIGRATIONS/controls-square-triangle-v1"
+if [ ! -e "$CONTROL_FACE_FIX" ]; then
+    mkdir -p "$CONTROL_MIGRATIONS"
+    if [ -f "$CONTROLS" ] &&
+       grep -q '^Square = 1-29,10-191$' "$CONTROLS" &&
+       grep -q '^Triangle = 1-47,10-188$' "$CONTROLS"; then
+        CONTROLS_NEW="$CONTROLS.umrk-new"
+        sed \
+            -e 's/^Square = 1-29,10-191$/Square = 1-29,10-188/' \
+            -e 's/^Triangle = 1-47,10-188$/Triangle = 1-47,10-191/' \
+            "$CONTROLS" >"$CONTROLS_NEW"
+        mv "$CONTROLS_NEW" "$CONTROLS"
+    fi
+    : >"$CONTROL_FACE_FIX"
+fi
+
+# Correct the original analog-up mapping once. The other stick directions use
+# SDL axis-direction keycodes 4000..4002; 190 is BTN_EAST, not Y-axis negative.
+# Only change the exact shipped value so a user remap remains untouched.
+CONTROL_ANALOG_UP_FIX="$CONTROL_MIGRATIONS/controls-analog-up-v1"
+if [ ! -e "$CONTROL_ANALOG_UP_FIX" ]; then
+    mkdir -p "$CONTROL_MIGRATIONS"
+    if [ -f "$CONTROLS" ] &&
+       grep -q '^An.Up = 1-37,10-190$' "$CONTROLS"; then
+        CONTROLS_NEW="$CONTROLS.umrk-new"
+        sed \
+            -e 's/^An.Up = 1-37,10-190$/An.Up = 1-37,10-4003/' \
+            "$CONTROLS" >"$CONTROLS_NEW"
+        mv "$CONTROLS_NEW" "$CONTROLS"
+    fi
+    : >"$CONTROL_ANALOG_UP_FIX"
 fi
 
 PPSSPP_INI="$STATE_ROOT/config/ppsspp/PSP/SYSTEM/ppsspp.ini"
@@ -102,6 +138,14 @@ export XDG_DATA_HOME="$STATE_ROOT/data"
 export XDG_CACHE_HOME="$STATE_ROOT/cache"
 INHERITED_LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}"
 export SDL_VIDEODRIVER="${PPSSPP_SDL_VIDEODRIVER:-kmsdrm}"
+
+# Jawaka publishes its calibrated uinput event for standalone emulators that
+# opt into the full input proxy. Restrict SDL to that event so it becomes
+# PPSSPP pad 0; otherwise the grabbed physical Loong Gamepad is enumerated
+# first and the pad-0 controls mapping never sees the normalized stick.
+if [ -n "${JAWAKA_INPUT_VIRTUAL_EVENT:-}" ]; then
+    export SDL_JOYSTICK_DEVICE="$JAWAKA_INPUT_VIRTUAL_EVENT"
+fi
 
 BACKEND="${PPSSPP_BACKEND:-vulkan}"
 ROTATION_MODE="${PPSSPP_ROTATION_MODE:-}"
@@ -197,6 +241,7 @@ esac
     printf 'version=%s backend=%s rotation=%s preset=%s direct_drm=%s\n' \
         "v1.20.4" "$BACKEND" "$ROTATION_MODE" "$PRESET" "${JAWAKA_DIRECT_DRM:-0}"
     printf 'state=%s\n' "$STATE_ROOT"
+    printf 'input=%s\n' "${SDL_JOYSTICK_DEVICE:-direct}"
     if [ "$BACKEND" = "vulkan" ]; then
         printf 'vulkan_root=%s icd=%s\n' "$VULKAN_ROOT" "$ICD_PATH"
     fi
@@ -305,7 +350,7 @@ The default launch wrapper uses direct-display Vulkan with the shared MLP1 g29
 graphics runtime and native PPSSPP portrait-panel rotation. launch-gles.sh is a
 composited GLES recovery path. PPSSPP state is durable under USERDATA_PATH.
 PPSSPP_PRESET=balanced (default) or performance selects first-run defaults;
-existing user configuration is never overwritten.
+existing user remaps are preserved.
 EOF
 
     find "$OUTPUT_DIR" -maxdepth 3 -type f | sort
