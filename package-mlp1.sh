@@ -119,6 +119,73 @@ if [ ! -e "$CONTROL_ANALOG_UP_FIX" ]; then
     : >"$CONTROL_ANALOG_UP_FIX"
 fi
 
+# Wireless controllers take the first player slots, so a Jawaka launch can hand
+# PPSSPP the calibrated built-in pad as pad 1, 2 or 3 rather than pad 0. The
+# original mapping only bound pad 0 (device id 10), which left every slot but
+# the first dead. Bind each PSP control across pads 0-3 (10-13) so whichever
+# roster slot a player holds drives the single-player PSP controls. Emulator
+# functions (fast-forward, rewind, pause) stay on pad 0 deliberately.
+# Only rewrite a mapping whose every PSP control still matches the shipped
+# single-pad default; one user remap leaves the whole file alone.
+CONTROL_MULTIPAD_FIX="$CONTROL_MIGRATIONS/controls-multipad-v1"
+if [ ! -e "$CONTROL_MULTIPAD_FIX" ]; then
+    mkdir -p "$CONTROL_MIGRATIONS"
+    CONTROLS_PRISTINE=0
+    if [ -f "$CONTROLS" ]; then
+        CONTROLS_PRISTINE=1
+        for shipped in \
+            'Up = 1-19,10-19' \
+            'Down = 1-20,10-20' \
+            'Left = 1-21,10-21' \
+            'Right = 1-22,10-22' \
+            'Circle = 1-52,10-190' \
+            'Cross = 1-54,10-189' \
+            'Square = 1-29,10-188' \
+            'Triangle = 1-47,10-191' \
+            'Start = 1-62,10-197' \
+            'Select = 1-66,10-196' \
+            'L = 10-193' \
+            'R = 10-192' \
+            'An.Up = 1-37,10-4003' \
+            'An.Down = 1-39,10-4002' \
+            'An.Left = 1-38,10-4001' \
+            'An.Right = 1-40,10-4000'; do
+            if ! grep -qxF "$shipped" "$CONTROLS"; then
+                CONTROLS_PRISTINE=0
+                break
+            fi
+        done
+    fi
+    if [ "$CONTROLS_PRISTINE" = 1 ]; then
+        CONTROLS_NEW="$CONTROLS.umrk-new"
+        if awk '
+            BEGIN {
+                split("Up Down Left Right Circle Cross Square Triangle " \
+                      "Start Select L R An.Up An.Down An.Left An.Right", k, " ")
+                for (i in k) psp[k[i]] = 1
+            }
+            {
+                split($0, parts, " = ")
+                if (!(parts[1] in psp)) { print; next }
+                n = split(parts[2], toks, ",")
+                out = ""
+                for (i = 1; i <= n; i++) {
+                    out = out (out == "" ? "" : ",") toks[i]
+                    if (toks[i] ~ /^10-/) {
+                        code = substr(toks[i], 4)
+                        out = out ",11-" code ",12-" code ",13-" code
+                    }
+                }
+                print parts[1] " = " out
+            }' "$CONTROLS" >"$CONTROLS_NEW"; then
+            mv "$CONTROLS_NEW" "$CONTROLS"
+        else
+            rm -f "$CONTROLS_NEW"
+        fi
+    fi
+    : >"$CONTROL_MULTIPAD_FIX"
+fi
+
 PPSSPP_INI="$STATE_ROOT/config/ppsspp/PSP/SYSTEM/ppsspp.ini"
 PRESET="${PPSSPP_PRESET:-balanced}"
 case "$PRESET" in
@@ -139,11 +206,14 @@ export XDG_CACHE_HOME="$STATE_ROOT/cache"
 INHERITED_LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}"
 export SDL_VIDEODRIVER="${PPSSPP_SDL_VIDEODRIVER:-kmsdrm}"
 
-# Jawaka publishes its calibrated uinput event for standalone emulators that
-# opt into the full input proxy. Restrict SDL to that event so it becomes
-# PPSSPP pad 0; otherwise the grabbed physical Loong Gamepad is enumerated
-# first and the pad-0 controls mapping never sees the normalized stick.
-if [ -n "${JAWAKA_INPUT_VIRTUAL_EVENT:-}" ]; then
+# A Jawaka launch already exports the full controller roster in player order
+# (wireless pads first, calibrated virtual Loong last) and hands the child a
+# private /dev/input holding exactly those devices, so the inherited value is
+# authoritative -- overwriting it here would throw away every paired
+# controller and leave only the built-in pad. Fall back to the calibrated
+# virtual event only when PPSSPP was started outside Jawaka and no ordered
+# list exists, which keeps direct invocation working.
+if [ -z "${SDL_JOYSTICK_DEVICE:-}" ] && [ -n "${JAWAKA_INPUT_VIRTUAL_EVENT:-}" ]; then
     export SDL_JOYSTICK_DEVICE="$JAWAKA_INPUT_VIRTUAL_EVENT"
 fi
 
