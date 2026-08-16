@@ -199,6 +199,88 @@ if [ ! -f "$PPSSPP_INI" ] && [ -f "$SELF_DIR/defaults/ppsspp-$PRESET.ini" ]; the
     cp "$SELF_DIR/defaults/ppsspp-$PRESET.ini" "$PPSSPP_INI"
 fi
 
+# Follow Leaf's UI language. PPSSPP ships the translations in bin/assets/lang
+# already, so selecting one is all that is needed -- but the value of this key
+# is the ini FILENAME STEM in that directory, not a locale code, which is why
+# "zh_CN" appears nowhere in the binary. An absent JAWAKA_LANGUAGE means PPSSPP
+# was started outside Jawaka, so leave the config alone entirely.
+#
+# The shipped defaults carry only [CPU] and [Graphics], so on a first run the
+# section has to be created rather than edited.
+#
+# Nothing here may abort the launch: a language preference is not worth failing
+# a game over, so every step is guarded and the original file survives intact.
+if [ -n "${JAWAKA_LANGUAGE:-}" ] && [ -f "$PPSSPP_INI" ]; then
+    PPSSPP_LANG="en_US"
+    if [ -f "$SELF_DIR/bin/assets/lang/$JAWAKA_LANGUAGE.ini" ]; then
+        PPSSPP_LANG="$JAWAKA_LANGUAGE"
+    fi
+
+    LANG_MIGRATIONS="$STATE_ROOT/.umrk-migrations"
+    LANG_OWNED="$LANG_MIGRATIONS/language-last-written"
+    LANG_PREVIOUS=""
+    LANG_CLAIMED=0
+    if [ -f "$LANG_OWNED" ]; then
+        LANG_PREVIOUS="$(cat "$LANG_OWNED" 2>/dev/null || true)"
+        LANG_CLAIMED=1
+    fi
+
+    LANG_CURRENT="$(awk '
+        /^\[/ { general = ($0 ~ /^\[General\][ \t\r]*$/); next }
+        general && /^[ \t]*Language[ \t]*=/ {
+            sub(/^[ \t]*Language[ \t]*=[ \t]*/, "")
+            sub(/[ \t\r]+$/, "")
+            print
+            exit
+        }' "$PPSSPP_INI" 2>/dev/null || true)"
+
+    # Write only while the key still holds what we last wrote. Once the value
+    # differs, the user picked a language inside PPSSPP itself and owns it from
+    # then on -- the same rule the controls migrations above follow.
+    #
+    # A populated key is NOT evidence of user intent: PPSSPP rewrites the whole
+    # config on exit and always emits Language, defaulted from the locale. So
+    # until the marker exists we have never managed this key and claim it,
+    # rather than mistaking PPSSPP's own default for somebody's choice -- that
+    # mistake locks the key out permanently, because the default is written on
+    # the very first run.
+    if [ "$LANG_CLAIMED" = 0 ] || [ -z "$LANG_CURRENT" ] ||
+       [ "$LANG_CURRENT" = "$LANG_PREVIOUS" ]; then
+        if [ "$LANG_CURRENT" != "$PPSSPP_LANG" ]; then
+            PPSSPP_INI_NEW="$PPSSPP_INI.umrk-new"
+            if awk -v want="$PPSSPP_LANG" '
+                BEGIN { general = 0; done = 0 }
+                /^\[/ {
+                    general = ($0 ~ /^\[General\][ \t\r]*$/)
+                    print
+                    if (general && !done) { print "Language = " want; done = 1 }
+                    next
+                }
+                general && /^[ \t]*Language[ \t]*=/ { next }
+                { print }
+                END {
+                    if (!done) { print ""; print "[General]"; print "Language = " want }
+                }' "$PPSSPP_INI" >"$PPSSPP_INI_NEW" 2>/dev/null &&
+               [ -s "$PPSSPP_INI_NEW" ] &&
+               grep -q "^Language = $PPSSPP_LANG\$" "$PPSSPP_INI_NEW"; then
+                mv "$PPSSPP_INI_NEW" "$PPSSPP_INI"
+            else
+                rm -f "$PPSSPP_INI_NEW"
+            fi
+        fi
+        mkdir -p "$LANG_MIGRATIONS" 2>/dev/null || true
+        printf '%s\n' "$PPSSPP_LANG" >"$LANG_OWNED" 2>/dev/null || true
+    fi
+fi
+
+# This build links SDL2_ttf but has no fontconfig, so PPSSPP has no way of its
+# own to find a font covering CJK and draws those glyphs as squares -- including
+# the endonyms in its own language list. Hand it the Droid Sans Fallback the
+# release already ships (colon-separated, most preferred first).
+if [ -z "${PPSSPP_FALLBACK_FONTS:-}" ]; then
+    export PPSSPP_FALLBACK_FONTS="$PLATFORM_ROOT/assets/pkg/chinese-fallback-font.ttf"
+fi
+
 export HOME="$STATE_ROOT/home"
 export XDG_CONFIG_HOME="$STATE_ROOT/config"
 export XDG_DATA_HOME="$STATE_ROOT/data"
