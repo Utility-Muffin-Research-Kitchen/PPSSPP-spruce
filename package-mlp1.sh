@@ -26,6 +26,28 @@ write_launch_script() {
     cat >"$path" <<'EOF'
 #!/bin/sh
 set -eu
+# LOG-SAFE-1. The session log lives on a FAT card and can go unwritable (a bad
+# cluster chain, a full card, or the FAT32 4 GiB per-file ceiling). stdout and
+# stderr here are inherited from the launcher and point at that file. Under
+# set -e a failed echo would abort this script and the game would never start,
+# so probe both once and fall back to /dev/null, then never let a log write
+# decide whether a game launches.
+leaf_log_probe() {
+    # A real byte, not a zero-length write: a 0-byte write can succeed without
+    # touching the device and would not detect EIO/EFBIG. The subshell ignores
+    # SIGXFSZ: at the FAT32 ceiling the kernel raises it and its default action
+    # would kill this shell before the write could fail with EFBIG.
+    ( trap '' XFSZ; printf '\n' ) 2>/dev/null
+}
+leaf_log_probe >/dev/null 2>&1 || true
+if ! leaf_log_probe; then
+    exec >/dev/null
+fi
+if ! leaf_log_probe >&2; then
+    exec 2>/dev/null
+fi
+
+log() { ( trap '' XFSZ; printf '%s\n' "$*" ) 2>/dev/null || true; }
 
 SELF_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 
@@ -36,13 +58,13 @@ elif [ -n "${UMRK_ENV_FILE:-}" ] && [ -f "$UMRK_ENV_FILE" ]; then
 fi
 
 if [ "$#" -lt 1 ]; then
-    echo "usage: launch.sh <rom-path>" >&2
+    log "usage: launch.sh <rom-path>"
     exit 64
 fi
 
 ROM_PATH="$1"
 if [ ! -f "$ROM_PATH" ]; then
-    echo "PPSSPP ROM does not exist: $ROM_PATH" >&2
+    log "PPSSPP ROM does not exist: $ROM_PATH"
     exit 66
 fi
 
@@ -191,7 +213,7 @@ PRESET="${PPSSPP_PRESET:-balanced}"
 case "$PRESET" in
     balanced|performance) ;;
     *)
-        echo "unsupported PPSSPP_PRESET: $PRESET" >&2
+        log "unsupported PPSSPP_PRESET: $PRESET"
         exit 64
         ;;
 esac
@@ -309,8 +331,8 @@ case "$BACKEND" in
     vulkan)
         ROTATION_MODE="${ROTATION_MODE:-native}"
         if [ ! -f "$DRIVER_PATH" ] || [ ! -f "$ICD_PATH" ]; then
-            echo "PPSSPP Vulkan runtime is incomplete: $VULKAN_ROOT" >&2
-            echo "Select the PPSSPP GLES core or restage the MLP1 graphics runtime." >&2
+            log "PPSSPP Vulkan runtime is incomplete: $VULKAN_ROOT"
+            log "Select the PPSSPP GLES core or restage the MLP1 graphics runtime."
             exit 69
         fi
         case "${JAWAKA_DIRECT_DRM:-0}" in
@@ -319,7 +341,7 @@ case "$BACKEND" in
                 case "${PPSSPP_ALLOW_NO_DIRECT_DRM:-0}" in
                     1|true|yes|TRUE|YES) ;;
                     *)
-                        echo "PPSSPP Vulkan requires Jawaka's direct-DRM handoff." >&2
+                        log "PPSSPP Vulkan requires Jawaka's direct-DRM handoff."
                         exit 75
                         ;;
                 esac
@@ -350,8 +372,8 @@ case "$BACKEND" in
                     DRM_ROTATE_SHIM="$PORTMASTER_DATA_ROOT/compat/drm/aarch64/leaf-drm-rotate.so"
                 fi
                 if [ ! -f "$DRM_ROTATE_SHIM" ]; then
-                    echo "PPSSPP's optional DRM rotation shim is unavailable." >&2
-                    echo "Install the PortMaster Pak or set PPSSPP_DRM_ROTATE_SHIM explicitly." >&2
+                    log "PPSSPP's optional DRM rotation shim is unavailable."
+                    log "Install the PortMaster Pak or set PPSSPP_DRM_ROTATE_SHIM explicitly."
                     exit 69
                 fi
                 export DISPLAY_ROTATION=0
@@ -362,7 +384,7 @@ case "$BACKEND" in
                 esac
                 ;;
             *)
-                echo "unsupported Vulkan PPSSPP_ROTATION_MODE: $ROTATION_MODE" >&2
+                log "unsupported Vulkan PPSSPP_ROTATION_MODE: $ROTATION_MODE"
                 exit 64
                 ;;
         esac
@@ -370,7 +392,7 @@ case "$BACKEND" in
     gles)
         ROTATION_MODE="${ROTATION_MODE:-gles}"
         if [ "$ROTATION_MODE" != "gles" ]; then
-            echo "GLES requires PPSSPP_ROTATION_MODE=gles" >&2
+            log "GLES requires PPSSPP_ROTATION_MODE=gles"
             exit 64
         fi
         unset VK_ICD_FILENAMES
@@ -383,11 +405,19 @@ case "$BACKEND" in
         export DISPLAY_ROTATION="${PPSSPP_DISPLAY_ROTATION:-270}"
         ;;
     *)
-        echo "unsupported PPSSPP_BACKEND: $BACKEND" >&2
+        log "unsupported PPSSPP_BACKEND: $BACKEND"
         exit 64
         ;;
 esac
 
+# LOG-SAFE-1. The PPSSPP log lives on the same FAT card as the session log, so
+# this redirect gets the same treatment: prove the file can take a real byte,
+# then either log there or log nowhere, but never fail the launch on it.
+if leaf_log_probe >>"$LOG_ROOT/ppsspp.log"; then
+    exec >>"$LOG_ROOT/ppsspp.log" 2>&1
+else
+    exec >/dev/null 2>&1
+fi
 {
     printf '%s\n' "=== UMRK PPSSPP launch ==="
     printf 'version=%s backend=%s rotation=%s preset=%s direct_drm=%s\n' \
@@ -397,16 +427,37 @@ esac
     if [ "$BACKEND" = "vulkan" ]; then
         printf 'vulkan_root=%s icd=%s\n' "$VULKAN_ROOT" "$ICD_PATH"
     fi
-} >>"$LOG_ROOT/ppsspp.log"
+} || true
 
-exec "$SELF_DIR/bin/PPSSPPSDL" --fullscreen "--graphics=$BACKEND" "$ROM_PATH" \
-    >>"$LOG_ROOT/ppsspp.log" 2>&1
+exec "$SELF_DIR/bin/PPSSPPSDL" --fullscreen "--graphics=$BACKEND" "$ROM_PATH"
 EOF
     chmod 755 "$path"
 
     cat >"$OUTPUT_DIR/launch-gles.sh" <<'EOF'
 #!/bin/sh
 set -eu
+# LOG-SAFE-1. The session log lives on a FAT card and can go unwritable (a bad
+# cluster chain, a full card, or the FAT32 4 GiB per-file ceiling). stdout and
+# stderr here are inherited from the launcher and point at that file. Under
+# set -e a failed echo would abort this script and the game would never start,
+# so probe both once and fall back to /dev/null, then never let a log write
+# decide whether a game launches.
+leaf_log_probe() {
+    # A real byte, not a zero-length write: a 0-byte write can succeed without
+    # touching the device and would not detect EIO/EFBIG. The subshell ignores
+    # SIGXFSZ: at the FAT32 ceiling the kernel raises it and its default action
+    # would kill this shell before the write could fail with EFBIG.
+    ( trap '' XFSZ; printf '\n' ) 2>/dev/null
+}
+leaf_log_probe >/dev/null 2>&1 || true
+if ! leaf_log_probe; then
+    exec >/dev/null
+fi
+if ! leaf_log_probe >&2; then
+    exec 2>/dev/null
+fi
+
+log() { ( trap '' XFSZ; printf '%s\n' "$*" ) 2>/dev/null || true; }
 SELF_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 export PPSSPP_BACKEND=gles
 export PPSSPP_ROTATION_MODE=gles
