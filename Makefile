@@ -13,9 +13,11 @@ help:
 	@echo "  make clean          remove generated package output"
 
 build-mlp1:
+	@image_id="$$( $(DOCKER) image inspect --format '{{.Id}}' "$(TOOLCHAIN_IMAGE)" )" || exit; \
 	$(DOCKER) run --rm \
 		-v "$(CURDIR)":/src \
 		-w /src \
+		-e TOOLCHAIN_IMAGE_ID="$$image_id" \
 		-e WORKDIR=/src/workdir/mlp1/build \
 		-e OUTPUT_DIR=/src/output/mlp1/build \
 		-e PPSSPP_VERSION \

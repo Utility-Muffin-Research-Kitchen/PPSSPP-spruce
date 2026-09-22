@@ -35,6 +35,7 @@ SRC_DIR="$WORKDIR/src/ppsspp-$PPSSPP_VERSION"
 BUILD_DIR="$WORKDIR/cmake/ppsspp-$PPSSPP_VERSION"
 PATCH_SET_ID="mlp1-v7-vulkan-kmsdrm-rotation-cli-backend-debugger-savestate-cjk-fallback-font"
 PATCH_MARKER="$SRC_DIR/.umrk-$PATCH_SET_ID-patches-applied"
+IMAGE_STAMP="$BUILD_DIR/.umrk-toolchain-image-id"
 
 echo "=== Building PPSSPP $PPSSPP_VERSION for UMRK MLP1 ==="
 
@@ -74,6 +75,15 @@ if [ ! -f "$PATCH_MARKER" ]; then
     touch "$PATCH_MARKER"
 fi
 
+# CMake-generated makefiles contain the absolute path to CMake in the image.
+# An unstamped build or a different image must configure from a clean directory.
+if [ -f "$BUILD_DIR/CMakeCache.txt" ] && \
+        { [ ! -s "$IMAGE_STAMP" ] || \
+          [ "$(cat "$IMAGE_STAMP")" != "${TOOLCHAIN_IMAGE_ID:-}" ]; }; then
+    echo "=== Toolchain image changed; resetting PPSSPP CMake cache ==="
+    rm -rf "$BUILD_DIR"
+fi
+
 mkdir -p "$BUILD_DIR"
 cd "$BUILD_DIR"
 
@@ -110,6 +120,7 @@ if [ "${FORCE_CONFIGURE:-0}" = "1" ] || [ ! -f "$BUILD_DIR/CMakeCache.txt" ]; th
             sed -i 's|-isystem |-I|g' "$file"
         fi
     done < <(find "$BUILD_DIR" \( -name 'flags.make' -o -name 'build.ninja' \))
+    printf '%s\n' "${TOOLCHAIN_IMAGE_ID:-}" >"$IMAGE_STAMP"
 fi
 
 make -j"$BUILD_JOBS" PPSSPPSDL
