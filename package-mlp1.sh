@@ -298,9 +298,23 @@ fi
 # This build links SDL2_ttf but has no fontconfig, so PPSSPP has no way of its
 # own to find a font covering CJK and draws those glyphs as squares -- including
 # the endonyms in its own language list. Hand it the Droid Sans Fallback the
-# release already ships (colon-separated, most preferred first).
+# release already ships for Han and kana, and Leaf's own Hangul face for Korean
+# (colon-separated, most preferred first; a missing file is skipped).
+#
+# Droid Sans Fallback carries three stray Hangul syllables, one of them the
+# everyday 가, and PPSSPP takes each glyph from the first font that has it. So
+# a Korean UI lists the Hangul face first, or every 가 would come from a
+# different font than the syllables around it. Elsewhere Droid stays first, so
+# Chinese and Japanese keep its punctuation and the Hangul face only fills in
+# Korean game titles.
 if [ -z "${PPSSPP_FALLBACK_FONTS:-}" ]; then
-    export PPSSPP_FALLBACK_FONTS="$PLATFORM_ROOT/assets/pkg/chinese-fallback-font.ttf"
+    PPSSPP_CJK_FONT="$PLATFORM_ROOT/assets/pkg/chinese-fallback-font.ttf"
+    PPSSPP_HANGUL_FONT="${CAT_FONTS_DIR:-$PLATFORM_ROOT/launcher/res}/fonts/LeafHanSansKR/LeafHanSansKR-Regular.otf"
+    case "${JAWAKA_LANGUAGE:-}" in
+        ko|ko_*) PPSSPP_FALLBACK_FONTS="$PPSSPP_HANGUL_FONT:$PPSSPP_CJK_FONT" ;;
+        *)       PPSSPP_FALLBACK_FONTS="$PPSSPP_CJK_FONT:$PPSSPP_HANGUL_FONT" ;;
+    esac
+    export PPSSPP_FALLBACK_FONTS
 fi
 
 export HOME="$STATE_ROOT/home"
