@@ -146,6 +146,9 @@ def patch_sdl_vulkan_window(main_path: Path, context_path: Path) -> None:
 \t// VK_KHR_display creates its surface directly and only needs SDL's KMSDRM
 \t// window for input and WM metadata. Stock MLP1 SDL correctly rejects
 \t// SDL_WINDOW_VULKAN for KMSDRM because it has no SDL Vulkan WSI backend.
+\t// On Wayland PPSSPP makes its Vulkan surface from the window's wl_surface
+\t// itself, so a plain window serves there too (Buildroot's SDL is built
+\t// without Vulkan and refuses SDL_WINDOW_VULKAN).
 \tint vulkanWindowMode = mode;
 #if !defined(VK_USE_PLATFORM_DISPLAY_KHR)
 \tvulkanWindowMode |= SDL_WINDOW_VULKAN;
@@ -186,22 +189,22 @@ def patch_sdl_vulkan_window(main_path: Path, context_path: Path) -> None:
 \t\tSDL_Vulkan_GetDrawableSize(window, &w, &h);
 \t\treturn VkExtent2D {(uint32_t)w, (uint32_t)h};
 \t});""",
-        """#if defined(VK_USE_PLATFORM_DISPLAY_KHR)
-\tvulkan_->SetCbGetDrawSize([]() {
+        """\tvulkan_->SetCbGetDrawSize([window]() {
+#if defined(VK_USE_PLATFORM_DISPLAY_KHR)
 \t\t// The MLP1 logical display is landscape while the direct-display
-\t\t// surface uses the panel's physical portrait extent.
-\t\treturn VkExtent2D {
-\t\t\t(uint32_t)g_display.pixel_yres,
-\t\t\t(uint32_t)g_display.pixel_xres,
-\t\t};
-\t});
-#else
-\tvulkan_->SetCbGetDrawSize([window]() {
+\t\t// surface uses the panel's physical portrait extent (KMSDRM only).
+\t\tconst char *videoDriver = SDL_GetCurrentVideoDriver();
+\t\tif (videoDriver && !SDL_strcmp(videoDriver, "KMSDRM")) {
+\t\t\treturn VkExtent2D {
+\t\t\t\t(uint32_t)g_display.pixel_yres,
+\t\t\t\t(uint32_t)g_display.pixel_xres,
+\t\t\t};
+\t\t}
+#endif
 \t\tint w=1,h=1;
 \t\tSDL_Vulkan_GetDrawableSize(window, &w, &h);
 \t\treturn VkExtent2D {(uint32_t)w, (uint32_t)h};
-\t});
-#endif""",
+\t});""",
         "direct-display draw-size callback",
     )
     context_path.write_text(content)

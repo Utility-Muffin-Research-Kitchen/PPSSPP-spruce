@@ -23,6 +23,7 @@ build-mlp1:
 		-e PPSSPP_VERSION \
 		-e BUILD_JOBS \
 		-e FORCE_CONFIGURE \
+		-e MLP1_WAYLAND_WSI \
 		-e MLP1_BUILD_PROFILE="$(MLP1_BUILD_PROFILE)" \
 		"$(TOOLCHAIN_IMAGE)" \
 		./build-mlp1.sh

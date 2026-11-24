@@ -7,6 +7,11 @@ WORKDIR="${WORKDIR:-$ROOT_DIR/workdir/mlp1/build}"
 OUTPUT_DIR="${OUTPUT_DIR:-$ROOT_DIR/output/mlp1/build}"
 BUILD_JOBS="${BUILD_JOBS:-$(nproc)}"
 MLP1_BUILD_PROFILE="${MLP1_BUILD_PROFILE:-perf}"
+# MLP1_WAYLAND_WSI=ON (Green Genes): PPSSPP's Vulkan on a Wayland window too.
+# The stock SDL headers in the sysroot have no Wayland driver, so SDL's
+# SysWM Wayland fields are declared here; at run time the system's SDL (with
+# Wayland) fills them. Unset, the build is as before.
+[ "${MLP1_WAYLAND_WSI:-OFF}" = ON ] || unset MLP1_WAYLAND_WSI
 
 if [ -z "${SYSROOT:-}" ] || [ -z "${CC:-}" ] || [ -z "${CXX:-}" ]; then
     echo "build-mlp1.sh must run inside the UMRK MLP1 toolchain environment." >&2
@@ -33,7 +38,7 @@ fi
 
 SRC_DIR="$WORKDIR/src/ppsspp-$PPSSPP_VERSION"
 BUILD_DIR="$WORKDIR/cmake/ppsspp-$PPSSPP_VERSION"
-PATCH_SET_ID="mlp1-v7-vulkan-kmsdrm-rotation-cli-backend-debugger-savestate-cjk-fallback-font"
+PATCH_SET_ID="mlp1-v8-vulkan-kmsdrm-or-wayland-rotation-cli-backend-debugger-savestate-cjk-fallback-font"
 PATCH_MARKER="$SRC_DIR/.umrk-$PATCH_SET_ID-patches-applied"
 IMAGE_STAMP="$BUILD_DIR/.umrk-toolchain-image-id"
 
@@ -93,7 +98,7 @@ if [ "${FORCE_CONFIGURE:-0}" = "1" ] || [ ! -f "$BUILD_DIR/CMakeCache.txt" ]; th
         -DCMAKE_TOOLCHAIN_FILE="$CMAKE_TOOLCHAIN_FILE" \
         -DPKG_CONFIG_EXECUTABLE="$PKG_CONFIG_EXECUTABLE" \
         -DCMAKE_C_FLAGS="$UMRK_MLP1_PROFILE_CFLAGS -fomit-frame-pointer -Wno-error" \
-        -DCMAKE_CXX_FLAGS="$UMRK_MLP1_PROFILE_CXXFLAGS -fomit-frame-pointer -Wno-error" \
+        -DCMAKE_CXX_FLAGS="$UMRK_MLP1_PROFILE_CXXFLAGS -fomit-frame-pointer -Wno-error${MLP1_WAYLAND_WSI:+ -DSDL_VIDEO_DRIVER_WAYLAND}" \
         -DCMAKE_EXE_LINKER_FLAGS="$UMRK_MLP1_PROFILE_LDFLAGS -static-libstdc++ -static-libgcc" \
         -DUSING_GLES2=ON \
         -DUSING_EGL=ON \
@@ -101,7 +106,7 @@ if [ "${FORCE_CONFIGURE:-0}" = "1" ] || [ ! -f "$BUILD_DIR/CMakeCache.txt" ]; th
         -DVULKAN=ON \
         -DUSE_VULKAN_DISPLAY_KHR=ON \
         -DUSING_X11_VULKAN=OFF \
-        -DUSE_WAYLAND_WSI=OFF \
+        -DUSE_WAYLAND_WSI="${MLP1_WAYLAND_WSI:-OFF}" \
         -DBUILD_SHARED_LIBS=OFF \
         -DUSE_SYSTEM_LIBPNG=OFF \
         -DUSE_SYSTEM_FFMPEG=OFF \
